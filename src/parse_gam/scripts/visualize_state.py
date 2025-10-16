@@ -150,10 +150,10 @@ def main():
 
         args.output.mkdir(exist_ok=True)
 
-        for state_path in tqdm(args.states.iterdir()):
+        for idx, state_path in tqdm(enumerate(args.states.iterdir())):
             frame_path = args.frames / state_path.with_suffix(".jpg").name
 
-            output_path = args.output / frame_path.name
+            output_path = args.output / f"vis_{idx:04d}.jpg"
 
             visualize_single_state(state_path, frame_path, output_path)
     else:
