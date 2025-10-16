@@ -5,6 +5,7 @@ import geopandas as gpd
 from shapely.geometry import Polygon
 import pandas as pd
 import argparse
+from tqdm import tqdm
 
 
 def __parse_args():
@@ -99,16 +100,16 @@ def parse_half_board_state(gdf):
             if half == "LOWER":
                 # Lower half
                 d = gdf[
-                    (gdf.y_center < 0.5)
+                    (gdf.y_center > 0.5)
                     & ((gdf.x_center - h_pos).abs() < CHECKER_POINT_X_TOLERANCE)
                 ].reset_index(drop=True)
                 point_index = 6 - h_point_index
             elif half == "UPPER":
                 d = gdf[
-                    (gdf.y_center > 0.5)
+                    (gdf.y_center < 0.5)
                     & ((gdf.x_center - h_pos).abs() < CHECKER_POINT_X_TOLERANCE)
                 ].reset_index(drop=True)
-                point_index = 12 - h_point_index
+                point_index = 7 + h_point_index
             else:
                 raise RuntimeError()
 
@@ -178,28 +179,41 @@ def parse_board_state(predictions: gpd.GeoDataFrame) -> dict | None:
         elif x > 6 and x <= 12:
             full_state[f"Point_{x}"] = state_board_1[f"Point_{x - 6}"]
         elif x > 12 and x <= 18:
-            full_state[f"Point_{x}"] = state_board_1[f"Point_{19 - x}"]
+            full_state[f"Point_{x}"] = state_board_1[f"Point_{x - 6}"]
         elif x > 18 and x <= 24:
-            full_state[f"Point_{x}"] = state_board_2[f"Point_{25 - x + 6}"]
+            full_state[f"Point_{x}"] = state_board_2[f"Point_{x - 12}"]
+
+    full_state["status"] = "VALID"
 
     return full_state, projected
+
+
+def parse_single_prediction(prediction_path, output_path):
+    predictions = parse_yolo_predictions(prediction_path)
+
+    parse_output = parse_board_state(predictions)
+
+    if parse_output is None:
+        print("Unable to parse board state")
+        board_state = {"status": "UNPARSEABLE"}
+    else:
+        board_state, projected_predictions = parse_output
+
+    with output_path.open("w") as io:
+        json.dump(board_state, io, indent=4)
 
 
 def main():
     args = __parse_args()
 
-    predictions = parse_yolo_predictions(args.predictions)
+    if args.predictions.is_dir():
+        args.output.mkdir(exist_ok=True)
 
-    parse_output = parse_board_state(predictions)
-
-    if parse_output is None:
-        print(f"Unable to parse board state")
-        return 0
-
-    board_state, projected_predictions = parse_output
-
-    with args.output.open("w") as io:
-        json.dump(board_state, io, indent=4)
+        for pred in tqdm(args.predictions.iterdir()):
+            output_name = args.output / pred.with_suffix(".json").name
+            parse_single_prediction(pred, output_name)
+    else:
+        parse_single_prediction(args.predictions, args.output)
 
 
 if __name__ == "__main__":
