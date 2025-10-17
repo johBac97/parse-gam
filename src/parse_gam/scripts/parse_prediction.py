@@ -7,6 +7,8 @@ import pandas as pd
 import argparse
 from tqdm import tqdm
 
+CLASS_MAPPING = {"BOARD": 0, "CHECKER_P1": 1, "CHECKER_P2": 2, "DIE": 3, "POINT": 4}
+
 
 def __parse_args():
     args = argparse.ArgumentParser()
@@ -122,12 +124,16 @@ def parse_half_board_state(gdf):
             )
 
             if class_index_temp.shape[0] == 0:
-                class_index = 2
+                class_index = CLASS_MAPPING["CHECKER_P2"]
             else:
                 class_index = class_index_temp.values[0]
 
             num_checkers = deduplicate_gdf(d).shape[0]
-            val = num_checkers if class_index == 2 else -num_checkers
+            val = (
+                num_checkers
+                if class_index == CLASS_MAPPING["CHECKER_P2"]
+                else -num_checkers
+            )
 
             state[f"Point_{point_index}"] = val
 
@@ -135,9 +141,9 @@ def parse_half_board_state(gdf):
 
 
 def parse_board_state(predictions: gpd.GeoDataFrame) -> dict | None:
-    BOARD_CLASS = 0
-    CHECKER_P1_CLASS = 1
-    CHECKER_P2_CLASS = 2
+    BOARD_CLASS = CLASS_MAPPING["BOARD"]
+    CHECKER_P1_CLASS = CLASS_MAPPING["CHECKER_P1"]
+    CHECKER_P2_CLASS = CLASS_MAPPING["CHECKER_P2"]
 
     # There are two 'boards' give the one to the left index 0 and the one to the right index 1
     boards = (
@@ -161,7 +167,11 @@ def parse_board_state(predictions: gpd.GeoDataFrame) -> dict | None:
 
     projected = projected[projected.clas.isin([CHECKER_P1_CLASS, CHECKER_P2_CLASS])]
 
+    if projected.shape[0] == 0:
+        print("No non-board predictions")
+        return None
     # Drop all predictions expcept ofr the Checkers P1 and Checkers P2 classes
+
     projected["geometry"] = projected.apply(to_polygon, axis="columns")
 
     projected = gpd.GeoDataFrame(projected)
