@@ -16,15 +16,15 @@ class CubePosition(str, Enum):
     P2 = "p2"
 
 
-# YOLO class indices
+# YOLO class indices — matches data/datasets/version2/data.yaml (train5 model)
 CLASS_MAPPING = {
     "BOARD": 0,
     "CHECKER_P1": 1,
     "CHECKER_P2": 2,
-    "DIE": 3,
-    "HAND": 4,
-    "POINT": 5,
-    "DOUBLING_CUBE": 6,
+    "DOUBLING_CUBE": 3,
+    "DIE": 4,
+    "HAND": 5,
+    "POINT": 6,
 }
 
 POINT_COLUMNS = [f"Point_{i}" for i in range(1, 25)]
