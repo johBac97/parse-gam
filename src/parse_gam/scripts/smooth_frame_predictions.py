@@ -90,11 +90,20 @@ def smooth_states(df, imputation_method="linear", window_size=9):
     return smoothed_df
 
 
+def _to_python(val):
+    """Convert numpy/pandas types to plain Python for JSON serialization."""
+    if pd.isna(val) if not isinstance(val, (list, dict)) else False:
+        return None
+    if hasattr(val, "item"):  # numpy scalar
+        return val.item()
+    return val
+
+
 def save_states(df, path: Path):
     path.mkdir(exist_ok=True)
 
     for _, row in df.iterrows():
-        data = row.to_dict()
+        data = {k: _to_python(v) for k, v in row.to_dict().items()}
         filename = data.pop("filename")
 
         with (path / filename).open("w") as f:

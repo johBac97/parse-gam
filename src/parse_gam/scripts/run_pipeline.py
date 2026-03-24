@@ -15,7 +15,7 @@ def __parse_args():
     )
     parser.add_argument("model", type=Path, help="Path to YOLO weights")
     parser.add_argument("source", type=Path, help="Path to input video")
-    parser.add_argument("name", type=str, help="Output name (subdirectory under inference/)")
+    parser.add_argument("name", type=str, help="Output folder name (created in current directory)")
     parser.add_argument(
         "--from-step",
         choices=STEPS,
@@ -39,23 +39,17 @@ def run(cmd: list[str], description: str):
 
 
 def find_frames_dir(root: Path) -> Path:
-    candidates = list(root.glob("*_frames"))
-    if len(candidates) == 1:
-        return candidates[0]
-    elif len(candidates) == 0:
-        raise FileNotFoundError(f"No *_frames directory found in {root}")
-    else:
-        raise FileNotFoundError(
-            f"Multiple *_frames directories in {root}: {candidates}. "
-            "Cannot determine which to use."
-        )
+    # YOLO saves frames inside the yolo/ subfolder
+    yolo_dir = root / "yolo"
+    return yolo_dir
 
 
 def main():
     args = __parse_args()
 
-    root_dir = Path("inference") / args.name
-    labels_dir = root_dir / "labels"
+    root_dir = Path(args.name)
+    yolo_dir = root_dir / "yolo"
+    labels_dir = yolo_dir / "labels"
     states_dir = root_dir / "states"
     smooth_dir = root_dir / "smooth_states"
     moves_path = root_dir / "moves.json"
@@ -65,16 +59,17 @@ def main():
 
     start_idx = STEPS.index(args.from_step)
 
-    # 1. YOLO detection
+    # 1. YOLO detection — outputs go into {name}/yolo/
     if start_idx <= STEPS.index("detect"):
+        root_dir.mkdir(parents=True, exist_ok=True)
         run(
             [
                 "uv", "run", "yolo",
                 "predict", "detect",
                 f"model={args.model}",
                 f"source={args.source}",
-                "project=inference",
-                f"name={args.name}",
+                f"project={root_dir}",
+                "name=yolo",
                 "save_txt=true",
                 "save_frames=true",
                 "save_conf=true",
@@ -149,7 +144,7 @@ def main():
             "Creating output video",
         )
 
-    print(f"\nPipeline complete. Output: {root_dir}")
+    print(f"\nPipeline complete. Output: {root_dir.resolve()}")
     if game_path.exists():
         print(f"Game record: {game_path}")
     if moves_path.exists():

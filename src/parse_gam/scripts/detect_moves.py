@@ -39,8 +39,20 @@ def load_states_df(states_dir: Path) -> pd.DataFrame:
         state = BoardState.load(p)
         d = state.to_dict()
         d["filename"] = p.name
+        # Derive file_index from filename if not set (e.g. smooth states saved
+        # before the serialization fix)
+        if d.get("file_index") is None:
+            try:
+                d["file_index"] = int(p.stem.split("_")[-1])
+            except ValueError:
+                pass
         rows.append(d)
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    if "status" not in df.columns:
+        df["status"] = "VALID"
+    if "file_index" not in df.columns:
+        df["file_index"] = range(len(df))
+    return df
 
 
 def extract_moves(df: pd.DataFrame, move_window: int = 10) -> list[dict]:
