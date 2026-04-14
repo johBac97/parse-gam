@@ -6,6 +6,7 @@ import argparse
 
 import geopandas as gpd
 import pandas as pd
+from PIL import Image
 from tqdm import tqdm
 
 from parse_gam.utils import (
@@ -22,12 +23,30 @@ from parse_gam.models import (
 
 log = logging.getLogger(__name__)
 
+# Process-level classifier model, loaded once per worker via pool initializer
+_die_classifier = None
+
+
+def _init_worker(classifier_path: Path | None):
+    global _die_classifier
+    if classifier_path is not None:
+        from ultralytics import YOLO
+        _die_classifier = YOLO(classifier_path)
+
 
 def __parse_args():
     args = argparse.ArgumentParser()
     args.add_argument("predictions", type=Path)
     args.add_argument("output", type=Path)
     args.add_argument("--num-proc", type=int, default=4)
+    args.add_argument(
+        "--frames", type=Path, default=None,
+        help="Directory of source frame images (required for die classification)",
+    )
+    args.add_argument(
+        "--die-classifier", type=Path, default=None,
+        help="Path to YOLO classify weights for die pip values",
+    )
     return args.parse_args()
 
 
@@ -267,11 +286,81 @@ def parse_board_state(predictions: gpd.GeoDataFrame) -> BoardState:
     )
 
 
-def parse_single_prediction(prediction_path: Path, output_path: Path):
+def _classify_dice(predictions: gpd.GeoDataFrame, frame_path: Path, classifier) -> list[int]:
+    """Crop each detected die and classify its pip value using the classifier model.
+
+    Only classifies dice whose centers fall within one of the two board bounding
+    boxes — ignores dice held in hands, on the table, etc.
+    """
+    BOARD_CLASS = CLASS_MAPPING["BOARD"]
+    DIE_CLASS = CLASS_MAPPING["DIE"]
+
+    dice = deduplicate_gdf(
+        predictions[predictions.clas == DIE_CLASS], iou_threshold=0.4
+    )
+    if dice.empty or not frame_path.exists():
+        return []
+
+    boards = predictions[predictions.clas == BOARD_CLASS]
+    if not boards.empty:
+        def _within_any_board(die):
+            for _, b in boards.iterrows():
+                if (
+                    b.x_center - b.width / 2 <= die.x_center <= b.x_center + b.width / 2
+                    and b.y_center - b.height / 2 <= die.y_center <= b.y_center + b.height / 2
+                ):
+                    return True
+            return False
+        dice = dice[dice.apply(_within_any_board, axis=1)]
+
+    if dice.empty:
+        return []
+
+    image = Image.open(frame_path)
+    img_w, img_h = image.size
+    values = []
+
+    for _, die in dice.iterrows():
+        x_c, y_c, w, h = die.x_center, die.y_center, die.width, die.height
+        left  = max(0,     int((x_c - w / 2) * img_w))
+        top   = max(0,     int((y_c - h / 2) * img_h))
+        right = min(img_w, int((x_c + w / 2) * img_w))
+        bottom= min(img_h, int((y_c + h / 2) * img_h))
+
+        if right <= left or bottom <= top:
+            continue
+
+        crop = image.crop((left, top, right, bottom))
+        result = classifier(crop, verbose=False)[0]
+        pip_value = int(result.names[result.probs.top1])
+        values.append(pip_value)
+
+    return sorted(values)
+
+
+def _find_frame(prediction_path: Path, frames_dir: Path) -> Path | None:
+    """Find the source frame image corresponding to a prediction label file."""
+    for ext in (".jpg", ".jpeg", ".png"):
+        candidate = frames_dir / (prediction_path.stem + ext)
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def parse_single_prediction(
+    prediction_path: Path,
+    output_path: Path,
+    frames_dir: Path | None = None,
+    classifier=None,
+):
     predictions = parse_yolo_predictions(prediction_path)
     board_state = parse_board_state(predictions)
 
-    # Extract file index from filename (e.g. "frame_0042.txt" -> 42)
+    if board_state.status == FrameStatus.VALID and classifier is not None and frames_dir is not None:
+        frame_path = _find_frame(prediction_path, frames_dir)
+        if frame_path is not None:
+            board_state.dice_values = _classify_dice(predictions, frame_path, classifier)
+
     try:
         file_index = int(prediction_path.stem.split("_")[-1])
     except ValueError:
@@ -283,9 +372,9 @@ def parse_single_prediction(prediction_path: Path, output_path: Path):
 
 
 def _process_file(args):
-    pred, output_dir = args
+    pred, output_dir, frames_dir = args
     output_name = output_dir / pred.with_suffix(".json").name
-    parse_single_prediction(pred, output_name)
+    parse_single_prediction(pred, output_name, frames_dir, _die_classifier)
     return pred
 
 
@@ -295,14 +384,19 @@ def main():
 
     if args.predictions.is_dir():
         args.output.mkdir(exist_ok=True)
-        all_preds = list(args.predictions.iterdir())
+        all_preds = [p for p in args.predictions.iterdir() if p.suffix == ".txt"]
+        task_args = [(pred, args.output, args.frames) for pred in all_preds]
         if args.num_proc > 1:
-            with multiprocessing.Pool(processes=args.num_proc) as pool:
+            with multiprocessing.Pool(
+                processes=args.num_proc,
+                initializer=_init_worker,
+                initargs=(args.die_classifier,),
+            ) as pool:
                 list(
                     tqdm(
                         pool.imap_unordered(
                             _process_file,
-                            [(pred, args.output) for pred in all_preds],
+                            task_args,
                             chunksize=max(1, len(all_preds) // (args.num_proc * 20)),
                         ),
                         total=len(all_preds),
@@ -310,8 +404,9 @@ def main():
                     )
                 )
         else:
-            for pred in tqdm(all_preds, desc="Parsing predictions"):
-                _process_file((pred, args.output))
+            _init_worker(args.die_classifier)
+            for task in tqdm(task_args, desc="Parsing predictions"):
+                _process_file(task)
     else:
         parse_single_prediction(args.predictions, args.output)
 

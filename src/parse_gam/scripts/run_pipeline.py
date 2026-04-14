@@ -25,6 +25,10 @@ def __parse_args():
     parser.add_argument("--imgsz", type=int, default=1280)
     parser.add_argument("--framerate", type=int, default=4, help="Output video FPS")
     parser.add_argument("--move-window", type=int, default=10)
+    parser.add_argument(
+        "--die-classifier", type=Path, default=None,
+        help="Path to YOLO classify weights for die pip values",
+    )
     return parser.parse_args()
 
 
@@ -82,10 +86,15 @@ def main():
     # 2. Parse predictions to board states
     if start_idx <= STEPS.index("parse"):
         states_dir.mkdir(parents=True, exist_ok=True)
-        run(
-            ["uv", "run", "parse-yolo-predictions", str(labels_dir), str(states_dir)],
-            "Parsing YOLO predictions to board states",
-        )
+        frames_dir = find_frames_dir(root_dir)
+        parse_cmd = [
+            "uv", "run", "parse-yolo-predictions",
+            str(labels_dir), str(states_dir),
+            "--frames", str(frames_dir),
+        ]
+        if args.die_classifier is not None:
+            parse_cmd += ["--die-classifier", str(args.die_classifier)]
+        run(parse_cmd, "Parsing YOLO predictions to board states")
 
     # 3. Smooth states
     if start_idx <= STEPS.index("smooth"):
@@ -119,7 +128,6 @@ def main():
 
     # 6. Visualize
     if start_idx <= STEPS.index("visualize"):
-        frames_dir = find_frames_dir(root_dir)
         vis_dir.mkdir(parents=True, exist_ok=True)
         run(
             [
