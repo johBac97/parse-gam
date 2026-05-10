@@ -318,24 +318,26 @@ def _classify_dice(predictions: gpd.GeoDataFrame, frame_path: Path, classifier) 
 
     image = Image.open(frame_path)
     img_w, img_h = image.size
-    values = []
+    padding = 0.15  # match extract_die_crops.py
 
+    crops = []
     for _, die in dice.iterrows():
         x_c, y_c, w, h = die.x_center, die.y_center, die.width, die.height
-        left  = max(0,     int((x_c - w / 2) * img_w))
-        top   = max(0,     int((y_c - h / 2) * img_h))
-        right = min(img_w, int((x_c + w / 2) * img_w))
-        bottom= min(img_h, int((y_c + h / 2) * img_h))
-
+        pad_x = w * padding
+        pad_y = h * padding
+        left   = max(0,     int((x_c - w / 2 - pad_x) * img_w))
+        top    = max(0,     int((y_c - h / 2 - pad_y) * img_h))
+        right  = min(img_w, int((x_c + w / 2 + pad_x) * img_w))
+        bottom = min(img_h, int((y_c + h / 2 + pad_y) * img_h))
         if right <= left or bottom <= top:
             continue
+        crops.append(image.crop((left, top, right, bottom)))
 
-        crop = image.crop((left, top, right, bottom))
-        result = classifier(crop, verbose=False)[0]
-        pip_value = int(result.names[result.probs.top1])
-        values.append(pip_value)
+    if not crops:
+        return []
 
-    return sorted(values)
+    results = classifier(crops, verbose=False)
+    return sorted(int(r.names[r.probs.top1]) for r in results)
 
 
 def _find_frame(prediction_path: Path, frames_dir: Path) -> Path | None:

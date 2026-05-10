@@ -140,8 +140,9 @@ class BoardState:
 @dataclass
 class Turn:
     """A single player turn: dice roll + resulting board change."""
-    player: int  # 1 or 2 (inferred from dice_board_half)
+    player: int  # 1 or 2
     dice: list[int]
+    moves: list[list[int]]  # [[from, to], ...] with 0=bar, 25=off
     state_before: dict
     state_after: dict
     frame_start: int
@@ -149,9 +150,12 @@ class Turn:
     cube_action: str | None = None  # "double", "take", "drop"
 
     def to_dict(self) -> dict:
+        from parse_gam.moves import moves_to_str
         return {
             "player": self.player,
             "dice": self.dice,
+            "moves": self.moves,
+            "moves_notation": moves_to_str([tuple(m) for m in self.moves]),
             "state_before": self.state_before,
             "state_after": self.state_after,
             "frame_start": self.frame_start,

@@ -20,6 +20,7 @@ from parse_gam.models import (
     POINT_COLUMNS,
     STARTING_POSITION,
 )
+from parse_gam.moves import reconstruct_moves
 
 
 def __parse_args():
@@ -64,6 +65,37 @@ def _most_common_dice_half(states: list[BoardState]) -> int | None:
         return None
     counts = Counter(halves)
     return counts.most_common(1)[0][0]
+
+
+def _infer_player(before: BoardState, after: BoardState) -> int:
+    """Infer which player moved by counting how many of each player's checker
+    positions changed. The mover always has more changing positions than the
+    opponent (who can only lose at most one blot to the bar).
+
+    Returns 1, 2, or 0 (unknown).
+    """
+    p1_changes = 0
+    p2_changes = 0
+    for i in range(24):
+        b, a = before.points[i], after.points[i]
+        if b == a:
+            continue
+        if b < 0 or a < 0:
+            p1_changes += 1
+        if b > 0 or a > 0:
+            p2_changes += 1
+
+    # Bar entries count toward the entering player
+    if before.bar_p1 > after.bar_p1:
+        p1_changes += 1
+    if before.bar_p2 > after.bar_p2:
+        p2_changes += 1
+
+    if p1_changes > p2_changes:
+        return 1
+    if p2_changes > p1_changes:
+        return 2
+    return 0
 
 
 def _collect_dice_values(states: list[BoardState]) -> list[int]:
@@ -125,13 +157,30 @@ def detect_turns(states: list[BoardState]) -> list[Turn]:
             post_turn_state = state
 
             if _board_changed(pre_turn_state, post_turn_state):
-                dice_half = _most_common_dice_half(turn_dice_states)
-                # Map dice_board_half to player: 0 (left board) -> P1, 1 (right) -> P2
-                player = (dice_half + 1) if dice_half is not None else 0
+                player = _infer_player(pre_turn_state, post_turn_state)
+                dice = _collect_dice_values(turn_dice_states)
+
+                if player in (1, 2):
+                    bar_before = pre_turn_state.bar_p1 if player == 1 else pre_turn_state.bar_p2
+                    bar_after  = post_turn_state.bar_p1 if player == 1 else post_turn_state.bar_p2
+                    off_before = pre_turn_state.off_p1 if player == 1 else pre_turn_state.off_p2
+                    off_after  = post_turn_state.off_p1 if player == 1 else post_turn_state.off_p2
+                    raw_moves = reconstruct_moves(
+                        player,
+                        pre_turn_state.points,
+                        post_turn_state.points,
+                        bar_before, bar_after,
+                        off_before, off_after,
+                        dice,
+                    )
+                    moves = [list(m) for m in raw_moves]
+                else:
+                    moves = []
 
                 turn = Turn(
                     player=player,
-                    dice=_collect_dice_values(turn_dice_states),
+                    dice=dice,
+                    moves=moves,
                     state_before=pre_turn_state.to_dict(),
                     state_after=post_turn_state.to_dict(),
                     frame_start=turn_dice_states[0].file_index or 0,
